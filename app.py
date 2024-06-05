@@ -18,10 +18,10 @@ match_offers = 0
 meetups = 0
 
 event_locations = ['the UwU-banner at the back side of the uv-tunnel',
-'the game playing on the beamer in front of the uv-tunnel',
+'the game playing on the beamer with wooden controllers in front of the uv-tunnel',
 'the paws on the back side of the uv-tunnel',
 'the rainbow laces vending machine near the Chaos Post',
-'the electronics vending machine with niki fox sticks on top on the first floor',
+'the electronics vending machine on the first floor',
 'the multiplayer snake screen',
 'the rope climbing location',
 'the µPOC helpdesk at the eurobox-pile',
@@ -48,14 +48,17 @@ def start():
     earnestness = request.form['earnestness']
     session['gender'] = gender
     session['earnestness'] = earnestness
+    print('def start: ' + gender + ', ' + earnestness)
     return redirect(url_for('earnestness'))
 
 @app.route('/earnestness')
 def earnestness():
+    print('def earnestness')
     return render_template('earnestness.html')
 
 @app.route('/earnest', methods=['POST'])
 def earnest():
+    print('def earnest')
     if (request.form.get('earnestness')):
         real_earnestness = request.form['earnestness']
         session['real_earnestness'] = real_earnestness
@@ -65,10 +68,12 @@ def earnest():
 
 @app.route('/questionnaire')
 def questionnaire():
+    print('def questionnaire')
     return render_template('questionnaire.html')
 
 @app.route('/questionnaire', methods=['POST'])
 def questions():
+    print('def questions')
     question1 = request.form['question1']
     question2 = request.form['question2']
     question3 = request.form['question3']
@@ -83,10 +88,12 @@ def questions():
 
 @app.route('/recognition')
 def recognition():
+    print('def recognition')
     return render_template('recognition.html')
 
 @app.route('/recognition', methods=['POST'])
 def recognition_form():
+    print('def recognition_form')
     cat_ears = request.form['cat_ears']
     session['cat_ears'] = cat_ears
     if cat_ears != '404':
@@ -100,10 +107,14 @@ def recognition_form():
 
 @app.route('/waiting')
 def waiting():
+    if not session.get('gender'):
+        # user loaded the /waiting without having registered
+        return redirect('/')
     return render_template('waiting.html')
 
 @socketio.on('join')
 def handle_join(data):
+    # print('def handle_join, session[gender]: ', session['gender'], ', request.sid: ', request.sid)
     user = {
         'id': request.sid,
         'gender': session['gender'],
@@ -122,18 +133,20 @@ def handle_join(data):
     
     waiting_room.append(user)
     session['user'] = user
+    print(f"++++++ Waiting Room joined, waiting_room_size {len(waiting_room)} {[u['distinguish'] for u in waiting_room]}")
 
     #waiting_room_joins += 1
-    print('Waiting Room joined.')
 
     if len(waiting_room) > 1:
         match_users()
 
 def match_users():
+    #print('def match_users')
     if len(waiting_room) > 1:
         user1 = waiting_room.pop(0)
         user2 = waiting_room.pop(0)
-        room = str(random.randint(1000, 9999999)) # avoid collision the easy way
+        #print(f">>><<< def match_users, waiting_room_size {len(waiting_room)} {[u['distinguish'] for u in waiting_room]}")
+        room = str(random.randint(1000, 9999999))  # avoid collision the easy way
         matches[room] = (user1, user2)
         join_room(room, sid=user1['id'])
         join_room(room, sid=user2['id'])
@@ -142,16 +155,22 @@ def match_users():
         emit('match', {'room': room, 'partner_data': json.dumps(user2_match_data), 'timeout': TIMEOUT}, room=user1['id'])
         emit('match', {'room': room, 'partner_data': json.dumps(user1_match_data), 'timeout': TIMEOUT}, room=user2['id'])
         #match_offers += 1
-        print('Match offered!')
+        print(f">>><<< Match offered!, waiting_room_size {len(waiting_room)} {[u['distinguish'] for u in waiting_room]}")
 
 @socketio.on('response')
 def handle_response(data):
+    if not session.get('user'):
+        print("handle_respose but no user")
+        # user loaded the /waiting without having registered
+        return()
     room = data['room']
     response = data['response']
     user = session['user']
+    print('def response:', user['distinguish'], 'data:', data)
 
     if room in matches:
-        if response == 'timeout':
+        if response == 'timeout':  # match not accepted or rejected, timeout
+            print('match not accepted or rejected, timeout:', user['distinguish'])
             if 'response' in user:
                 waiting_room.append(user)
                 emit('return', room=room)
@@ -164,7 +183,8 @@ def handle_response(data):
         user1, user2 = matches[room]
         partner = user1 if user['id'] == user2['id'] else user2
 
-        if response == 'reject':
+        if response == 'reject':  # match rejected
+            print(':((((( match rejected:', user['distinguish'], partner['distinguish'])
             emit('rejected', room=room)
             socketio.close_room(room)
             del matches[room]
@@ -172,29 +192,36 @@ def handle_response(data):
             waiting_room.append(user)
             return()
 
-        if 'response' in partner:
+        if 'response' in partner:  # match accepted by both
             if partner['response'] == 'accept' and response == 'accept':
                 location = get_location()
                 emit('meetup', {'location': location}, room=room)
                 #meetups += 1
-                print('Meetup offered! Location: ' + location + '.')
+                print(':))))) Meetup offered! Location: ' + location + '.')
         else:
             user['response'] = response
 
 @socketio.on('message')
 def handle_message(data):
+    if not session.get('user'):
+        print("handle_message but no user")
+        # user still in match but lost session.
+        return()
+    print('def handle_message')
     room = data['room']
     message = data['message']
     emit('message', {'message': message, 'sender': session['user']['id']}, room=room)
 
 def get_location():
+    print('def get_location')
     index = random.randint(0, len(event_locations) - 1)
     return event_locations[index]
 
-@socketio.on('client_disconnecting')
+@socketio.on('client_disconnecting')  # from client javascript window.onbeforeunload
 def disconnect_details():
     user = session.get('user')
     if user:
+        print('------ def disconnect_details (javascript):', user['distinguish'])
         if user in waiting_room:
             waiting_room.remove(user)
         for room, (user1, user2) in list(matches.items()):
@@ -206,11 +233,15 @@ def disconnect_details():
                 leave_room(room, sid=user2['id'])
                 socketio.close_room(room)
                 del matches[room]
+    else:
+        print('------ def disconnect_details (javascript): UNKNOWN')
+        
 
-@socketio.on('disconnect')
+@socketio.on('disconnect')  # socket died
 def disconnect():
     user = session.get('user')
     if user:
+        print('\n------ def disconnect (socket died):', user['distinguish'])
         if user in waiting_room:
             waiting_room.remove(user)
         for room, (user1, user2) in list(matches.items()):
@@ -222,6 +253,8 @@ def disconnect():
                 leave_room(room, sid=user2['id'])
                 socketio.close_room(room)
                 del matches[room]
+    else:
+        print('------ def disconnect (socket died): UNKNOWN')
 
 if __name__ == '__main__':
     socketio.run(app)
